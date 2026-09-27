@@ -2,51 +2,76 @@
   const root = document.querySelector('[data-tool="vpn-check"]');
   if (!root) return;
   const en = root.dataset.lang === 'en';
+  const say = (english, dutch) => en ? english : dutch;
   const key = 'vpnnu-vpn-check-before';
   const current = root.querySelector('[data-current-ip]');
   const country = root.querySelector('[data-current-country]');
   const saved = root.querySelector('[data-saved-ip]');
   const savedCountry = root.querySelector('[data-saved-country]');
   const result = root.querySelector('[data-vpn-result]');
+  const saveButton = root.querySelector('[data-save-ip]');
+  const checkButton = root.querySelector('[data-refresh-ip]');
+  const clearButton = root.querySelector('[data-clear-ip]');
   let latest = null;
+  let busy = false;
+  saveButton.disabled = true;
 
   function readSaved() {
-    try { return JSON.parse(sessionStorage.getItem(key) || 'null'); } catch (_) { return null; }
+    try {
+      const value = JSON.parse(sessionStorage.getItem(key) || 'null');
+      return value && typeof value.ip === 'string' ? value : null;
+    } catch (_) { return null; }
   }
   function showSaved() {
     const before = readSaved();
     saved.textContent = before?.ip || '—';
     savedCountry.textContent = before?.country || '';
+    saveButton.hidden = !!before;
+    checkButton.hidden = !before && !!latest;
+    clearButton.hidden = !before;
   }
-  async function refresh(compare) {
-    result.textContent = en ? 'Checking…' : 'Controleren…';
+  async function refresh() {
+    if (busy) return;
+    busy = true;
+    saveButton.disabled = true;
+    checkButton.disabled = true;
+    result.textContent = say('Checking…', 'Controleren…');
     try {
       const response = await fetch(root.dataset.api || '/tools/ip.json', {cache: 'no-store'});
       if (!response.ok) throw new Error();
-      latest = await response.json();
-      current.textContent = latest.ip || '—';
-      country.textContent = [latest.family, latest.country].filter(Boolean).join(' · ');
+      const data = await response.json();
+      if (!data.ip) throw new Error();
+      latest = data;
+      saveButton.disabled = false;
+      current.textContent = data.ip;
+      country.textContent = [data.family, data.country].filter(Boolean).join(' · ');
       const before = readSaved();
-      result.textContent = !latest.ip ? (en ? 'Your IP could not be read.' : 'Je IP kon niet worden gelezen.')
-        : compare && !before ? (en ? 'Save your IP before changing the connection.' : 'Bewaar eerst je IP voordat je de verbinding verandert.')
-        : compare && before?.ip === latest.ip ? (en ? 'The visible IP is unchanged. Check your VPN app.' : 'Het zichtbare IP is gelijk gebleven. Controleer je VPN-app.')
-        : compare ? (en ? 'The visible IP changed. This alone does not prove the VPN is active.' : 'Het zichtbare IP is veranderd. Dit bewijst op zichzelf geen actieve VPN.')
-        : '';
-    } catch (_) { result.textContent = en ? 'The check failed. Try again.' : 'De controle is niet gelukt. Probeer opnieuw.'; }
+      result.textContent = !before ? say('Save this IP while your VPN is off.', 'Bewaar dit IP terwijl je VPN uitstaat.')
+        : before.ip === data.ip ? say('IP unchanged. Check that your VPN is connected, then check again.', 'IP ongewijzigd. Controleer je VPN-verbinding en probeer opnieuw.')
+        : say('IP changed. Confirm the connection in your VPN app.', 'IP veranderd. Controleer de verbinding in je VPN-app.');
+    } catch (_) {
+      latest = null;
+      result.textContent = say('Could not check your IP. Check your connection and try again.', 'IP controleren is niet gelukt. Controleer je verbinding en probeer opnieuw.');
+    } finally {
+      busy = false;
+      checkButton.disabled = false;
+      showSaved();
+    }
   }
-  root.querySelector('[data-save-ip]').addEventListener('click', () => {
+  saveButton.addEventListener('click', () => {
     if (!latest?.ip) return;
     try { sessionStorage.setItem(key, JSON.stringify({ip: latest.ip, country: latest.country})); }
-    catch (_) { result.textContent = en ? 'Your browser could not save the comparison.' : 'Je browser kon de vergelijking niet bewaren.'; return; }
+    catch (_) { result.textContent = say('Your browser could not save the IP.', 'Je browser kon het IP niet bewaren.'); return; }
     showSaved();
-    result.textContent = en ? 'Saved. Change your VPN connection, then compare.' : 'Opgeslagen. Verander je VPN-verbinding en vergelijk opnieuw.';
+    result.textContent = say('Saved. Turn on your VPN, then check again.', 'Opgeslagen. Zet je VPN aan en controleer opnieuw.');
   });
-  root.querySelector('[data-refresh-ip]').addEventListener('click', () => refresh(true));
-  root.querySelector('[data-clear-ip]').addEventListener('click', () => {
-    sessionStorage.removeItem(key);
+  checkButton.addEventListener('click', refresh);
+  clearButton.addEventListener('click', () => {
+    try { sessionStorage.removeItem(key); }
+    catch (_) { result.textContent = say('Your browser could not clear the saved IP.', 'Je browser kon het opgeslagen IP niet wissen.'); return; }
     showSaved();
-    result.textContent = en ? 'Saved IP removed.' : 'Opgeslagen IP gewist.';
+    result.textContent = say('Comparison cleared. Turn your VPN off before saving again.', 'Vergelijking gewist. Zet je VPN uit voordat je opnieuw opslaat.');
   });
   showSaved();
-  refresh(false);
+  refresh();
 })();
